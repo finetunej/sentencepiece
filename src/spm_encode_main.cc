@@ -15,6 +15,8 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <iostream>
+#include <fstream>
 
 #include "common.h"
 #include "filesystem.h"
@@ -50,6 +52,22 @@ ABSL_FLAG(int32, vocabulary_threshold, 0,
 ABSL_FLAG(bool, generate_vocabulary, false,
           "Generates vocabulary file instead of segmentation");
 
+void writeVectorToFile(const std::string& filename, const std::vector<int>& data) {
+    std::ofstream outFile(filename, std::ios::binary | std::ios::out);
+
+    if (!outFile) {
+        std::cerr << "Error: Unable to open the file: " << filename << std::endl;
+        return;
+    }
+
+    for (int num : data) {
+        uint16_t num16 = static_cast<uint16_t>(num);
+        outFile.write(reinterpret_cast<char*>(&num16), sizeof(uint16_t));
+    }
+
+    outFile.close();
+}
+
 int main(int argc, char *argv[]) {
   sentencepiece::ScopedResourceDestructor cleaner;
   sentencepiece::ParseCommandLineFlags(argv[0], &argc, &argv, true);
@@ -81,9 +99,11 @@ int main(int argc, char *argv[]) {
                                absl::GetFlag(FLAGS_vocabulary_threshold)));
   }
 
-  auto output =
-      sentencepiece::filesystem::NewWritableFile(absl::GetFlag(FLAGS_output));
-  CHECK_OK(output->status());
+  std::unique_ptr<sentencepiece::filesystem::WritableFile> output;
+  if (absl::GetFlag(FLAGS_output_format) != "map") {
+    output = sentencepiece::filesystem::NewWritableFile(absl::GetFlag(FLAGS_output));
+    CHECK_OK(output->status());
+  }
 
   std::string line;
   std::vector<std::string> sps;
@@ -110,6 +130,11 @@ int main(int argc, char *argv[]) {
     process = [&](absl::string_view line) {
       CHECK_OK(sp.Encode(line, &sps));
       output->WriteLine(absl::StrJoin(sps, " "));
+    };
+  } else if (absl::GetFlag(FLAGS_output_format) == "map") {
+    process = [&](absl::string_view line) {
+      CHECK_OK(sp.Encode(line, &ids));
+      writeVectorToFile(absl::GetFlag(FLAGS_output), ids);
     };
   } else if (absl::GetFlag(FLAGS_output_format) == "id") {
     process = [&](absl::string_view line) {
